@@ -8,26 +8,29 @@
 #   cd gong<Tab>          # -> cd 工作/
 #   vim 工作/bao<Tab>      # -> vim 工作/报告.txt
 #
-# How: wraps zsh's _files function, the central dispatcher for file
-# completion.  Native completion runs first (with full color, menu,
-# cycling).  When the prefix looks like a pinyin query, extra matches
-# are added via compadd to the same completion pool.
+# How: wraps zsh's _path_files — the lowest-level file listing function
+# that every completion (cd, ls, vim, ...) ultimately calls.  Native
+# completion runs first, then pinyin results are added via compadd to
+# the same pool, inheriting full color / menu / cycling for free.
 
 # ---- guard -----------------------------------------------------------
 
 (( ${+_zh_installed} )) && return 0
 typeset -g _zh_installed=1
 
-# ---- wrap _files -----------------------------------------------------
+# ---- wrap _path_files ------------------------------------------------
 
-# Force-load the autoloadable _files function.
-autoload +X _files 2>/dev/null
+# _path_files is the lowest-level file/directory listing function in
+# the zsh completion system.  Every completion that lists files (cd,
+# ls, vim, cat, rm, ...) ultimately calls _path_files.  Wrapping it
+# at this level catches all of them.
 
-# If not available (e.g. broken fpath), bail without side effects.
-(( ${+functions[_files]} )) || return 0
+# Force-load the autoloadable function.
+autoload +X _path_files 2>/dev/null
+(( ${+functions[_path_files]} )) || return 0
 
 # Save the original.
-functions -c _files _zh_orig_files
+functions -c _path_files _zh_orig_path_files
 
 # ---- pinyin helper ---------------------------------------------------
 
@@ -59,17 +62,14 @@ _zh_pinyin_add() {
   compadd -Q -a matches
 }
 
-# ---- override _files -------------------------------------------------
+# ---- override _path_files --------------------------------------------
 
-_files() {
+_path_files() {
   local orig_prefix="$PREFIX" orig_iprefix="$IPREFIX"
 
-  _zh_orig_files "$@"
+  _zh_orig_path_files "$@"
   local ret=$?
 
-  # Restore original prefix so pinyin matching sees the raw query,
-  # then add extras to the same completion pool (both native and
-  # pinyin matches participate in menu / colors / cycling).
   PREFIX="$orig_prefix"
   IPREFIX="$orig_iprefix"
   _zh_pinyin_add && ret=0

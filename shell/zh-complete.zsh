@@ -10,8 +10,10 @@
 
 # ---- guard -----------------------------------------------------------
 
-(( ${+_zh_installed} )) && return 0
-typeset -g _zh_installed=1
+# Only skip if our completer is already in the chain.
+local -a _zh_check
+zstyle -a ':completion:*' completer _zh_check 2>/dev/null || true
+(( ${_zh_check[(Ie)_zh_pinyin_completer]} )) && return 0
 
 # ---- pinyin completer -------------------------------------------------
 

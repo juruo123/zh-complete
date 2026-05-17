@@ -18,6 +18,8 @@ zstyle -a ':completion:*' completer _zh_check 2>/dev/null || true
 # ---- pinyin completer -------------------------------------------------
 
 _zh_pinyin_completer() {
+  echo "$(date +%H:%M:%S) completer called, PREFIX=[$PREFIX]" >> /tmp/_zh_diag.log
+
   local word="${(Q)PREFIX}"
   [[ -n "$word" ]] && [[ "$word" =~ ^[a-z][a-z0-9]*$ ]] || return 1
 
@@ -61,5 +63,7 @@ zstyle -a ':completion:*' completer existing 2>/dev/null || true
 (( ${#existing} )) || existing=(_complete _ignored)
 
 if (( ! ${existing[(Ie)_zh_pinyin_completer]} )); then
-  zstyle ':completion:*' completer _zh_pinyin_completer "${existing[@]}"
+  # Place our completer AFTER _complete so the completion context
+  # (tags, styles, etc.) is fully initialized before we try compadd.
+  zstyle ':completion:*' completer _complete _zh_pinyin_completer _ignored
 fi

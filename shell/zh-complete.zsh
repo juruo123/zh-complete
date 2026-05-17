@@ -2,50 +2,29 @@
 #
 #   source /path/to/zh-complete/shell/zh-complete.zsh
 #
-# Then type pinyin queries and press Tab — works for all commands that
-# complete file paths (cd, ls, cat, vim, rm, ...):
+#   cd gong<Tab>          # -> 工作/
+#   cd 工作/bao<Tab>       # -> 工作/报告.txt
 #
-#   cd gong<Tab>          # -> cd 工作/
-#   vim 工作/bao<Tab>      # -> vim 工作/报告.txt
-#
-# How: wraps zsh's _path_files — the lowest-level file listing function
-# that every completion (cd, ls, vim, ...) ultimately calls.  Native
-# completion runs first, then pinyin results are added via compadd to
-# the same pool, inheriting full color / menu / cycling for free.
+# Pinyin completions participate in the native zsh completion menu
+# with full color, highlighting, and cycling.
 
 # ---- guard -----------------------------------------------------------
 
 (( ${+_zh_installed} )) && return 0
 typeset -g _zh_installed=1
 
-# ---- wrap _path_files ------------------------------------------------
+# ---- pinyin completer -------------------------------------------------
 
-# _path_files is the lowest-level file/directory listing function in
-# the zsh completion system.  Every completion that lists files (cd,
-# ls, vim, cat, rm, ...) ultimately calls _path_files.  Wrapping it
-# at this level catches all of them.
-
-# Force-load the autoloadable function.
-autoload +X _path_files 2>/dev/null
-(( ${+functions[_path_files]} )) || return 0
-
-# Save the original.
-functions -c _path_files _zh_orig_path_files
-
-# ---- pinyin helper ---------------------------------------------------
-
-_zh_pinyin_add() {
+_zh_pinyin_completer() {
   local word="${(Q)PREFIX}"
   [[ -n "$word" ]] && [[ "$word" =~ ^[a-z][a-z0-9]*$ ]] || return 1
 
-  # Only cd / pushd / z / j / pcd filter to directories.
   local cmd="${words[1]}" filter=""
   case "$cmd" in
     cd|pcd|z|j|pushd) filter="--dirs" ;;
     *)                filter=""        ;;
   esac
 
-  # Directory part already resolved (e.g. "工作/" in "工作/bao").
   local iprefix="${(Q)IPREFIX}"
   local cwd="${iprefix:-$PWD}"
   [[ -n "$iprefix" ]] && [[ ! -d "$iprefix" ]] && cwd="$PWD"
@@ -60,22 +39,24 @@ _zh_pinyin_add() {
     matches+=("${c##*/}")
   done
   compadd -Q -a matches
+
+  # Return 1 so _complete still runs after us and adds native matches.
+  # Both pinyin and native results participate in the same menu.
+  return 1
 }
 
-# ---- override _path_files --------------------------------------------
+# ---- install: prepend our completer before _complete ------------------
 
-_path_files() {
-  # Diagnostic: log every call so we can see if the wrapper fires.
-  echo "$(date +%H:%M:%S) _path_files wrapper called, PREFIX=[$PREFIX] IPREFIX=[$IPREFIX]" >> /tmp/_zh_diag.log
+# The completer chain tries each function in order.  We prepend ours
+# so it runs first.  Our completer adds pinyin matches via compadd
+# and always returns 1 (non-zero), so the chain continues to _complete
+# which adds native file/directory matches.  Both sets participate in
+# the same completion menu with full color / highlighting / cycling.
 
-  local orig_prefix="$PREFIX" orig_iprefix="$IPREFIX"
+local -a existing
+zstyle -a ':completion:*' completer existing 2>/dev/null || true
+(( ${#existing} )) || existing=(_complete _ignored)
 
-  _zh_orig_path_files "$@"
-  local ret=$?
-
-  PREFIX="$orig_prefix"
-  IPREFIX="$orig_iprefix"
-  _zh_pinyin_add && ret=0
-
-  return ret
-}
+if (( ! ${existing[(Ie)_zh_pinyin_completer]} )); then
+  zstyle ':completion:*' completer _zh_pinyin_completer "${existing[@]}"
+fi

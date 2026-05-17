@@ -10,8 +10,6 @@
 # Only cd / pushd / z / j / pcd filter to directories.
 # All other commands match both files and directories.
 
-autoload -U colors && colors
-
 # ---- helpers ---------------------------------------------------------
 
 typeset -ga _zh_dirs_only=(cd pcd z j pushd)
@@ -36,15 +34,18 @@ _zh_format_replacement() {
 _zh_show_list() {
   # $@ = full paths of candidates; $1 = current index (1-based)
   local idx="$1"; shift
+  local esc=$'\033'
+  local blue="${esc}[34m" reset="${esc}[0m"
   local -a disp=()
-  local i=1 c
+  local i=1 c name
   for c in "$@"; do
     local marker=" "
     (( i == idx )) && marker="→"
+    name="${c##*/}"
     if [[ -d "$c" ]]; then
-      disp+=("  ${marker} ${fg[blue]}${c##*/}/${reset_color}")
+      disp+=("  ${marker} ${blue}${name}/${reset}")
     else
-      disp+=("  ${marker} ${c##*/}")
+      disp+=("  ${marker} ${name}")
     fi
     (( i++ ))
   done

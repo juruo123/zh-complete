@@ -60,12 +60,13 @@ _zh_complete_tab_widget() {
     zle .expand-or-complete
     return
   elif (( ${#candidates} == 1 )); then
-    local replacement="${candidates[1]}"
+    local fullpath="${candidates[1]}"
+    local replacement="${fullpath##*/}"
     if _zh_complete_needs_quoting "$replacement"; then
       replacement="${(q)replacement}"
     fi
     # Add trailing / for directories so the user can immediately type sub-paths.
-    if [[ -d "${candidates[1]}" ]]; then
+    if [[ -d "$fullpath" ]]; then
       replacement="${replacement}/"
     fi
     LBUFFER="${LBUFFER%"$word"}${replacement}"

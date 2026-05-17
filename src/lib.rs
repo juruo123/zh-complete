@@ -92,6 +92,12 @@ fn find_matches_normalized(
         let display_name = file_name.to_string_lossy();
         let candidate = build_candidate(file_name.clone(), entry.path(), is_dir, &display_name);
 
+        // Skip entries with no Chinese characters — the shell's built-in
+        // completion already handles pure-ASCII names perfectly well.
+        if candidate.full_pinyin == candidate.ascii_folded {
+            continue;
+        }
+
         if let Some(score) = candidate.match_score(&query) {
             matches.push((score, candidate));
         }

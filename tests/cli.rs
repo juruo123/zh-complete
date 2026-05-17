@@ -206,3 +206,31 @@ fn handles_symlink_to_directory() {
         "stdout: {stdout}"
     );
 }
+
+#[test]
+fn pure_ascii_names_are_excluded() {
+    let tmp = tempfile::tempdir().unwrap();
+    fs::create_dir(tmp.path().join("compiler")).unwrap();
+    fs::create_dir(tmp.path().join("工作")).unwrap();
+
+    // "com" should only match 工作 (via gongzuo prefix), not compiler.
+    // In fact, there should be no match because "com" does not start with "gong".
+    let output = run(&["--dirs", "com"], tmp.path());
+    // compiler is pure ASCII, so only 工作 would be considered — but
+    // 工作 starts with "gongzuo", not "com", so no match at all.
+    assert_eq!(output.status.code(), Some(1));
+}
+
+#[test]
+fn chinese_names_work_alongside_ascii_names() {
+    let tmp = tempfile::tempdir().unwrap();
+    fs::create_dir(tmp.path().join("compiler")).unwrap();
+    fs::create_dir(tmp.path().join("工作")).unwrap();
+
+    // "gong" matches 工作 via full pinyin prefix, compiler excluded.
+    let output = run(&["--dirs", "gong"], tmp.path());
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("工作"), "stdout: {stdout}");
+    assert!(!stdout.contains("compiler"), "stdout: {stdout}");
+}

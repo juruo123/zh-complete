@@ -16,8 +16,18 @@ typeset -g _zh_installed=1
 # ---- pinyin completer -------------------------------------------------
 
 _zh_pinyin_completer() {
+  # DIAGNOSTIC: log everything to see what's happening.
+  echo "$(date +%H:%M:%S) completer called" >> /tmp/_zh_diag.log
+  echo "  PREFIX=[$PREFIX]" >> /tmp/_zh_diag.log
+  echo "  IPREFIX=[$IPREFIX]" >> /tmp/_zh_diag.log
+  echo "  words=[${words[@]}]" >> /tmp/_zh_diag.log
+
+  # Minimal test: add a static match to verify compadd works.
+  compadd -Q "ZZ_TEST_PINYIN_MATCH"
+  echo "  compadd exit: $?" >> /tmp/_zh_diag.log
+
   local word="${(Q)PREFIX}"
-  [[ -n "$word" ]] && [[ "$word" =~ ^[a-z][a-z0-9]*$ ]] || return 1
+  [[ -n "$word" ]] && [[ "$word" =~ ^[a-z][a-z0-9]*$ ]] || { echo "  bail: word=[$word] no match" >> /tmp/_zh_diag.log; return 1 }
 
   local cmd="${words[1]}" filter=""
   case "$cmd" in
@@ -29,9 +39,12 @@ _zh_pinyin_completer() {
   local cwd="${iprefix:-$PWD}"
   [[ -n "$iprefix" ]] && [[ ! -d "$iprefix" ]] && cwd="$PWD"
 
+  echo "  filter=[$filter] cwd=[$cwd] word=[$word]" >> /tmp/_zh_diag.log
+
   local candidates
   candidates=(${(f)"$(pinyin-path ${filter:+"$filter"} --cwd "$cwd" --list "$word" 2>/dev/null)"})
-  (( ${#candidates} )) || return 1
+  echo "  candidate count: ${#candidates}" >> /tmp/_zh_diag.log
+  (( ${#candidates} )) || { echo "  bail: no candidates" >> /tmp/_zh_diag.log; return 1 }
 
   local -a matches
   local c
@@ -39,9 +52,8 @@ _zh_pinyin_completer() {
     matches+=("${c##*/}")
   done
   compadd -Q -a matches
+  echo "  matches added: ${#matches}" >> /tmp/_zh_diag.log
 
-  # Return 1 so _complete still runs after us and adds native matches.
-  # Both pinyin and native results participate in the same menu.
   return 1
 }
 

@@ -2,80 +2,94 @@
 #
 #   source /path/to/zh-complete/shell/zh-complete.zsh
 #
-# Then type pinyin queries and press Tab.  For directories with Chinese
-# names, pinyin queries work alongside native completion:
+# Then type pinyin queries and press Tab:
 #
 #   cd gong<Tab>       # -> cd 工作/
 #   vim baogao<Tab>    # -> vim 报告.txt
-#   cd com<Tab>        # still completes to "compiler/" natively
+#   cd com<Tab>        # still completes natively to compiler/
 #
-# How it works:
-#   We register _pinyin_completer in zsh's completion chain *after*
-#   the built-in _complete.  For pure-ASCII queries that match real
-#   filenames, zsh's native completion handles them.  When there is
-#   no native match (e.g. "gong" won't match any file literally),
-#   our completer converts the query to pinyin and finds Chinese
-#   filenames.  Results from both run in parallel if needed.
+# To use a different key, change the bindkey line at the bottom.
 
-# ---- pinyin completer ------------------------------------------------
+# Commands where we only complete directories.
+typeset -ga _zh_dirs_cmds=(cd pcd z j pushd)
 
-_pinyin_completer() {
-  # Word prefix before the cursor — what the user typed.
-  local word="${PREFIX}"
+# Commands where we only complete files.
+typeset -ga _zh_files_cmds=(cat vim nvim vi less head tail bat nano emacs)
 
-  # Bail if it doesn't look like a potential pinyin query.
-  if [[ -z "$word" ]] || [[ ! "$word" =~ ^[a-z][a-z0-9]*$ ]]; then
-    return 1
+# Commands where we complete both.
+typeset -ga _zh_any_cmds=(ls code open rm cp mv)
+
+_zh_needs_quoting() {
+  [[ "$1" != "${1##[a-zA-Z0-9._/-]}" ]]
+}
+
+_zh_complete_widget() {
+  # Only intervene when cursor is at end of buffer.
+  if (( CURSOR != ${#BUFFER} )); then
+    zle _zh_orig_tab
+    return
   fi
 
-  # Determine filter based on the command name.
-  local cmd filter=""
-  cmd="${words[1]}"
+  # Word under cursor = last space-delimited token before cursor.
+  local word="${LBUFFER##* }"
+  if [[ -z "$word" ]] || [[ ! "$word" =~ ^[a-z][a-z0-9]*$ ]]; then
+    zle _zh_orig_tab
+    return
+  fi
 
-  case "$cmd" in
-    cd|pcd|z|j|pushd)              filter="--dirs"  ;;
-    cat|vim|nvim|vi|less|head|tail|bat|nano|emacs) filter="--files"  ;;
-    ls|code|open|rm|cp|mv)          filter=""        ;;
-    *)                              return 1         ;;
-  esac
+  # Determine filter from the command name.
+  local cmd="${${(z)BUFFER}[1]}"
+  local filter=""
+  if (( _zh_dirs_cmds[(Ie)$cmd] )); then
+    filter="--dirs"
+  elif (( _zh_files_cmds[(Ie)$cmd] )); then
+    filter="--files"
+  elif (( _zh_any_cmds[(Ie)$cmd] )); then
+    filter=""
+  else
+    zle _zh_orig_tab
+    return
+  fi
 
   local candidates
   candidates=(${(f)"$(pinyin-path ${filter:+"$filter"} --list "$word" 2>/dev/null)"})
-  (( ${#candidates} )) || return 1
 
-  local -a matches
-  local c name
-  for c in "$candidates[@]}"; do
-    name="${c##*/}"
-    if [[ -d "$c" ]]; then
-      matches+=("${name}/")
-    else
-      matches+=("$name")
+  if (( ${#candidates} == 0 )); then
+    zle _zh_orig_tab
+    return
+  elif (( ${#candidates} == 1 )); then
+    local fullpath="${candidates[1]}"
+    local replacement="${fullpath##*/}"
+    if _zh_needs_quoting "$replacement"; then
+      replacement="${(q)replacement}"
     fi
-  done
-
-  compadd -Q -X "  [zh-complete]" -a matches
-  return 0
+    if [[ -d "$fullpath" ]]; then
+      replacement="${replacement}/"
+    fi
+    LBUFFER="${LBUFFER%"$word"}${replacement}"
+  else
+    local -a displayed=()
+    local c
+    for c in "${candidates[@]}"; do
+      if [[ -d "$c" ]]; then
+        displayed+=("${c##*/}/")
+      else
+        displayed+=("${c##*/}")
+      fi
+    done
+    zle -M "  ${(j:  :)displayed}"
+  fi
 }
 
-# ---- Installation ----------------------------------------------------
-
-# Guard against double-sourcing.
-if zle -l | grep -q '_zh_complete_loaded' 2>/dev/null; then
+# ---- Install (guard against double-sourcing) ----
+if zle -l | grep -q '_zh_orig_tab' 2>/dev/null; then
   return 0
 fi
 
-# Read the current completer chain so we don't clobber user settings
-# (e.g. someone who already added _approximate for fuzzy matching).
-local -a existing
-zstyle -a ':completion:*' completer existing 2>/dev/null || true
-if (( ! ${#existing} )); then
-  existing=(_complete _ignored)
-fi
+# Preserve whatever widget is currently bound to Tab (^I).
+local orig
+orig="${${$(bindkey '^I')##* }:-expand-or-complete}"
+zle -A "$orig" _zh_orig_tab
 
-# Append our completer if not already present.
-if (( ! ${existing[(Ie)_pinyin_completer]} )); then
-  zstyle ':completion:*' completer "${existing[@]}" _pinyin_completer
-fi
-
-zle -N _zh_complete_loaded
+zle -N _zh_complete_widget
+bindkey '^I' _zh_complete_widget

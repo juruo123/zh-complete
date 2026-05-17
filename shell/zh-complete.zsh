@@ -33,33 +33,31 @@ _zh_format_replacement() {
 
 _zh_show_list() {
   # $@ = full paths of candidates; $1 = current index (1-based)
+  # Uses prompt escape sequences (%F, %B, etc.) which ZLE renders
+  # natively, unlike raw ANSI codes that zle -M displays literally.
   local idx="$1"; shift
-
-  # Terminal color codes: try echoti (terminfo), fall back to raw ANSI.
-  local blue="" reset=""
-  if zmodload zsh/terminfo 2>/dev/null; then
-    blue="$(echoti setaf 4 2>/dev/null)"
-    reset="$(echoti sgr0 2>/dev/null)"
-  fi
-  if [[ -z "$blue" ]]; then
-    blue=$'\033[34m'
-    reset=$'\033[0m'
-  fi
-
   local -a disp=()
   local i=1 c name
   for c in "$@"; do
-    local marker=" "
-    (( i == idx )) && marker="→"
     name="${c##*/}"
-    if [[ -d "$c" ]]; then
-      disp+=("  ${marker} ${blue}${name}/${reset}")
+    if (( i == idx )); then
+      # Current selection: bold arrow + name
+      if [[ -d "$c" ]]; then
+        disp+=(" %B→%b %F{blue}${name}/%f")
+      else
+        disp+=(" %B→%b %F{white}${name}%f")
+      fi
     else
-      disp+=("  ${marker} ${name}")
+      if [[ -d "$c" ]]; then
+        disp+=("   %F{blue}${name}/%f")
+      else
+        disp+=("   ${name}")
+      fi
     fi
     (( i++ ))
   done
-  zle -M "${(j:  :)disp}"
+  POSTDISPLAY=$'\n'"${(j:  :)disp}"
+  zle -R
 }
 
 # ---- word extraction ------------------------------------------------
@@ -119,6 +117,7 @@ _zh_complete_widget() {
   _zh_cycle_index=0
   _zh_cycle_lbuffer=""
   _zh_cycle_orig_lbuf=""
+  POSTDISPLAY=""
 
   # === guards ===
   (( CURSOR == ${#BUFFER} )) || { zle _zh_orig_tab; return }
@@ -156,6 +155,7 @@ _zh_complete_widget() {
 
   # === single match ===
   if (( ${#candidates} == 1 )); then
+    POSTDISPLAY=""
     local repl; repl=$(_zh_format_replacement "${candidates[1]}")
     LBUFFER="${LBUFFER%"$replace_from"}${repl}"
     return

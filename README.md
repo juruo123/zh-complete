@@ -9,13 +9,8 @@ complete `工作/` — no need to switch to a Chinese input method.
 # Build and install the helper binary
 cargo install --path .
 
-# Enable zsh integration
-source shell/zh-complete.zsh
-
-# Try it
-mkdir 工作 工作报告
-cd gong<Tab>        # completes to 工作/
-pcd gongzuo         # jumps into 工作/
+# Add to ~/.zshrc
+source /path/to/zh-complete/shell/zh-complete.zsh
 ```
 
 Or use the installer:
@@ -24,25 +19,41 @@ Or use the installer:
 ./install.sh
 ```
 
-## What you get
+## How it works
 
-| File | Purpose |
-|---|---|
-| `src/lib.rs` | Pinyin matching engine |
-| `src/main.rs` | `pinyin-path` CLI |
-| `shell/pcd.zsh` | `pcd` function — pinyin `cd` |
-| `shell/zh-complete.zsh` | Tab-completion widget for zsh |
-| `install.sh` | One-command installer |
+`zh-complete` hooks into zsh's completion system via a custom completer
+(`_zh_pinyin_completer`) that runs after `_complete`. When the built-in file
+completion finds nothing (e.g. no file literally named `gong*`), the pinyin
+completer converts the query to pinyin and adds matching Chinese filenames via
+`compadd`. Results participate in zsh's native completion menu with full color,
+highlighting, and cycling.
+
+```text
+Tab press
+    │
+    ▼
+_complete          ← native file/directory completion runs first
+    │ (no native match → return 1)
+    ▼
+_zh_pinyin_completer ← pinyin matching kicks in
+    │                   ┌─ pinyin-path (Rust): scan dir, pinyin convert, match
+    │                   └─ compadd: add Chinese results to completion pool
+    ▼
+_ignored
+    │
+    ▼
+zsh completion menu ← native colors, cycling, /-to-enter-dir
+```
 
 ## Matching rules
 
-| Input | Matches | Mechanism |
-|---|---|---|
-| `gong` | `工作` | Full pinyin prefix |
-| `gongzuo` | `工作` | Full pinyin prefix |
-| `gz` | `工作` | Pinyin initials |
-| `gzbg` | `工作报告` | Pinyin initials |
-| `rustxx` | `Rust学习` | Mixed ASCII + pinyin |
+| Input     | Matches        | Mechanism              |
+|-----------|----------------|------------------------|
+| `gong`    | `工作`         | Full pinyin prefix     |
+| `gongzuo` | `工作`         | Full pinyin prefix     |
+| `gz`      | `工作`         | Pinyin initials        |
+| `gzbg`    | `工作报告`     | Pinyin initials        |
+| `rustxx`  | `Rust学习`     | Mixed ASCII + pinyin   |
 
 Scoring (higher is better):
 
@@ -51,6 +62,8 @@ Scoring (higher is better):
 - Full-pinyin prefix: 200 + query length
 - Initials prefix: 100 + query length
 - Results sorted by score, then name length, then alphabetically.
+- Pure ASCII names (e.g. `compiler`) are excluded — the shell handles them
+  natively.
 
 ## pinyin-path CLI
 
@@ -72,37 +85,43 @@ pinyin-path --dirs --list --json gong
 pinyin-path --cwd /some/where gongzuo
 ```
 
-Exit codes: `0` single match, `1` no match, `2` ambiguous (multiple matches).
+Exit codes: `0` single match, `1` no match, `2` ambiguous.
 
-## Tab completion (zsh)
-
-Source `shell/zh-complete.zsh` from your `~/.zshrc`. It overrides the Tab key
-for these commands:
+## Supported commands
 
 - **Directories only:** `cd`, `pcd`, `z`, `j`, `pushd`
-- **Files only:** `cat`, `vim`, `nvim`, `vi`, `less`, `head`, `tail`, `bat`, `nano`, `emacs`
-- **Both:** `ls`, `code`, `open`, `rm`, `cp`, `mv`
+- **Files + directories:** `ls`, `cat`, `vim`, `nvim`, `vi`, `code`, `open`,
+  `rm`, `cp`, `mv`, `less`, `head`, `tail`, `bat`, `nano`, `emacs`
 
-When the word under the cursor looks like a pinyin query (lowercase ASCII),
-Tab triggers pinyin matching. Otherwise it falls through to zsh's built-in
-completion.
+The completer hooks into `_path_files` at the lowest level, so any command
+that completes file paths inherits pinyin support automatically.
 
-A single match replaces the word and adds a trailing `/` for directories.
-Multiple matches are displayed above the prompt.
+## Configuration
+
+Set **before** sourcing `shell/zh-complete.zsh`:
+
+```zsh
+# Hide the [zh] header in the completion menu
+zstyle ':zh-complete:*' show-header false
+
+# Enable diagnostic logging to /tmp/_zh_diag.log
+export ZH_COMPLETE_DEBUG=1
+```
 
 ## Project layout
 
 ```text
 Cargo.toml
 src/
-  lib.rs            # Scanning, pinyin conversion, scoring, matching
-  main.rs           # CLI (pinyin-path)
+  lib.rs              # Scanning, pinyin conversion, scoring, matching
+  main.rs             # CLI (pinyin-path)
 tests/
-  cli.rs            # Integration tests
+  cli.rs              # 18 integration tests
 shell/
-  pcd.zsh           # pcd zsh wrapper
-  zh-complete.zsh   # Tab-completion widget
-install.sh          # Installer
+  pcd.zsh             # pcd zsh wrapper
+  zh-complete.zsh     # zsh completer (hooks into completion system)
+install.sh            # One-command installer
+README.md
 ```
 
 ## Roadmap
@@ -111,15 +130,15 @@ install.sh          # Installer
 - [x] `pcd` zsh function
 - [x] Candidate scoring and ranking
 - [x] JSON output mode
-- [x] Tab-completion zsh widget
+- [x] zsh completer integration (native menu / colors / cycling)
 - [x] Integration tests
+- [x] Multi-level directory completion (`cd 工作/ce<Tab>`)
+- [x] Configurable header and debug logging
+- [ ] Unified `zhc` binary (init, config, path subcommands)
 - [ ] `fzf` integration for interactive selection
 - [ ] bash / fish support
-- [ ] Directory-aware completion (resolve `subdir/gong` against `subdir/`)
 - [ ] Cache support for large directories
 - [ ] Polyphonic character dictionary (e.g. 重庆 → chongqing)
-- [ ] Fuzzy / tolerant matching
-- [ ] Config file (custom scoring, excluded patterns)
 - [ ] Homebrew formula
 - [ ] GitHub Actions release builds
 

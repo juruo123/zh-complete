@@ -65,6 +65,9 @@ _zh_pinyin_add() {
 # ---- override _path_files --------------------------------------------
 
 _path_files() {
+  # Diagnostic: log every call so we can see if the wrapper fires.
+  echo "$(date +%H:%M:%S) _path_files wrapper called, PREFIX=[$PREFIX] IPREFIX=[$IPREFIX]" >> /tmp/_zh_diag.log
+
   local orig_prefix="$PREFIX" orig_iprefix="$IPREFIX"
 
   _zh_orig_path_files "$@"

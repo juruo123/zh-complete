@@ -34,8 +34,18 @@ _zh_format_replacement() {
 _zh_show_list() {
   # $@ = full paths of candidates; $1 = current index (1-based)
   local idx="$1"; shift
-  local esc=$'\033'
-  local blue="${esc}[34m" reset="${esc}[0m"
+
+  # Terminal color codes: try echoti (terminfo), fall back to raw ANSI.
+  local blue="" reset=""
+  if zmodload zsh/terminfo 2>/dev/null; then
+    blue="$(echoti setaf 4 2>/dev/null)"
+    reset="$(echoti sgr0 2>/dev/null)"
+  fi
+  if [[ -z "$blue" ]]; then
+    blue=$'\033[34m'
+    reset=$'\033[0m'
+  fi
+
   local -a disp=()
   local i=1 c name
   for c in "$@"; do

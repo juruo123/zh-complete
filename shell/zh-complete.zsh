@@ -82,7 +82,10 @@ _zh_pinyin_completer() {
   local orig_prefix="$PREFIX" orig_iprefix="$IPREFIX"
   PREFIX=""
 
-  local -a compadd_args=(-U -Q -S '')
+  # -U: accept matches even if they don't start with PREFIX.
+  # -f: treat as files → zsh auto-detects type, adds / for dirs.
+  # No -Q: let compadd auto-quote filenames with spaces/special chars.
+  local -a compadd_args=(-U -f)
   _zh_show_header && compadd_args+=(-X "%B[zh]%b")
 
   # -f: treat matches as files; zsh determines the type and adds "/"

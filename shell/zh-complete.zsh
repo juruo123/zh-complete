@@ -43,10 +43,13 @@ _zh_pinyin_completer() {
     matches+=("${c##*/}")
   done
 
-  # _wanted sets up the completion tag that compadd needs.
-  _wanted pinyin expl 'pinyin match' compadd -Q -a matches
+  # _description sets up the tag; unlike _wanted it doesn't check
+  # whether the tag is requested by the calling completion function.
+  local expl
+  _description pinyin expl 'pinyin match'
+  compadd "$expl[@]" -Q -a matches
+  echo "  compadd exit=$?, matches=${#matches}" >> /tmp/_zh_diag.log
 
-  # Always return 1 so _complete runs after us and adds native matches.
   return 1
 }
 

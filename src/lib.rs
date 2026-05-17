@@ -1,4 +1,5 @@
 use pinyin::ToPinyin;
+use serde::Serialize;
 use std::ffi::OsString;
 use std::fs;
 use std::io;
@@ -11,14 +12,31 @@ pub enum EntryKind {
     FilesOnly,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct Candidate {
+    #[serde(serialize_with = "serialize_os_string")]
     pub file_name: OsString,
+    #[serde(serialize_with = "serialize_path_buf")]
     pub path: PathBuf,
     pub is_dir: bool,
     pub full_pinyin: String,
     pub initials: String,
+    #[serde(skip)]
     pub ascii_folded: String,
+}
+
+fn serialize_os_string<S: serde::Serializer>(
+    v: &OsString,
+    s: S,
+) -> Result<S::Ok, S::Error> {
+    s.serialize_str(&v.to_string_lossy())
+}
+
+fn serialize_path_buf<S: serde::Serializer>(
+    v: &PathBuf,
+    s: S,
+) -> Result<S::Ok, S::Error> {
+    s.serialize_str(&v.to_string_lossy())
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -72,15 +90,25 @@ fn find_matches_normalized(
 
         let file_name = entry.file_name();
         let display_name = file_name.to_string_lossy();
-        let candidate = build_candidate(file_name, entry.path(), is_dir, &display_name);
+        let candidate = build_candidate(file_name.clone(), entry.path(), is_dir, &display_name);
 
-        if candidate.matches(&query) {
-            matches.push(candidate);
+        if let Some(score) = candidate.match_score(&query) {
+            matches.push((score, candidate));
         }
     }
 
-    matches.sort_by(candidate_order);
-    Ok(matches)
+    matches.sort_by(|(a_score, a), (b_score, b)| {
+        b_score
+            .cmp(a_score)
+            .then_with(|| a.file_name.len().cmp(&b.file_name.len()))
+            .then_with(|| {
+                a.file_name
+                    .to_string_lossy()
+                    .cmp(&b.file_name.to_string_lossy())
+            })
+    });
+
+    Ok(matches.into_iter().map(|(_, c)| c).collect())
 }
 
 fn build_candidate(
@@ -102,14 +130,30 @@ fn build_candidate(
 }
 
 impl Candidate {
-    fn matches(&self, query: &str) -> bool {
+    fn match_score(&self, query: &str) -> Option<usize> {
         if query.is_empty() {
-            return false;
+            return None;
         }
 
-        self.full_pinyin.starts_with(query)
-            || self.initials.starts_with(query)
-            || self.ascii_folded.starts_with(query)
+        if self.full_pinyin == query {
+            return Some(1000);
+        }
+        if self.initials == query {
+            return Some(900);
+        }
+        if self.ascii_folded == query {
+            return Some(800);
+        }
+        if self.full_pinyin.starts_with(query) {
+            return Some(200 + query.len());
+        }
+        if self.initials.starts_with(query) {
+            return Some(100 + query.len());
+        }
+        if self.ascii_folded.starts_with(query) {
+            return Some(query.len());
+        }
+        None
     }
 
     fn is_exact_match(&self, query: &str) -> bool {
@@ -158,12 +202,6 @@ fn matches_kind(is_dir: bool, kind: EntryKind) -> bool {
     }
 }
 
-fn candidate_order(a: &Candidate, b: &Candidate) -> std::cmp::Ordering {
-    a.file_name
-        .to_string_lossy()
-        .cmp(&b.file_name.to_string_lossy())
-        .then_with(|| a.path.cmp(&b.path))
-}
 
 #[cfg(test)]
 mod tests {
@@ -186,7 +224,7 @@ mod tests {
     }
 
     #[test]
-    fn matches_full_pinyin_initials_and_ascii_prefix() {
+    fn scores_full_pinyin_initials_and_ascii_prefix() {
         let candidate = build_candidate(
             OsString::from("工作报告"),
             PathBuf::from("工作报告"),
@@ -194,10 +232,24 @@ mod tests {
             "工作报告",
         );
 
-        assert!(candidate.matches("gong"));
-        assert!(candidate.matches("gongzuo"));
-        assert!(candidate.matches("gzbg"));
-        assert!(!candidate.matches("bg"));
+        assert!(candidate.match_score("gong").is_some());
+        assert!(candidate.match_score("gongzuo").is_some());
+        assert!(candidate.match_score("gzbg").is_some());
+        assert!(candidate.match_score("bg").is_none());
+    }
+
+    #[test]
+    fn exact_match_scores_higher_than_prefix() {
+        let candidate = build_candidate(
+            OsString::from("工作报告"),
+            PathBuf::from("工作报告"),
+            true,
+            "工作报告",
+        );
+
+        let exact = candidate.match_score("gongzuobaogao").unwrap();
+        let prefix = candidate.match_score("gong").unwrap();
+        assert!(exact > prefix, "exact {exact} should beat prefix {prefix}");
     }
 
     #[test]

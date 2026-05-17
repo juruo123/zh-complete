@@ -21,6 +21,10 @@ struct Args {
     #[arg(long)]
     list: bool,
 
+    /// Output results as JSON (candidate objects or array).
+    #[arg(long)]
+    json: bool,
+
     /// Directory to scan. Defaults to the current directory.
     #[arg(long, value_name = "DIR")]
     cwd: Option<PathBuf>,
@@ -51,25 +55,56 @@ fn run() -> Result<(), ExitCode> {
 
     if args.list {
         let matches = find_matches(&cwd, &args.query, kind).map_err(print_io_error)?;
-        for candidate in matches {
-            println!("{}", candidate.path.display());
+        if args.json {
+            serde_json::to_writer_pretty(io::stdout().lock(), &matches).map_err(|e| {
+                let _ = writeln!(io::stderr(), "pinyin-path: {e}");
+                ExitCode::from(1)
+            })?;
+            println!();
+        } else {
+            for candidate in matches {
+                println!("{}", candidate.path.to_string_lossy());
+            }
         }
         return Ok(());
     }
 
     match find_one(&cwd, &args.query, kind).map_err(print_io_error)? {
         Ok(candidate) => {
-            println!("{}", candidate.path.display());
+            if args.json {
+                serde_json::to_writer_pretty(io::stdout().lock(), &candidate).map_err(|e| {
+                    let _ = writeln!(io::stderr(), "pinyin-path: {e}");
+                    ExitCode::from(1)
+                })?;
+                println!();
+            } else {
+                println!("{}", candidate.path.to_string_lossy());
+            }
             Ok(())
         }
         Err(MatchError::NoMatch) => {
-            eprintln!("pinyin-path: no match for {:?}", args.query);
+            let msg = format!("pinyin-path: no match for {:?}", args.query);
+            if args.json {
+                println!("null");
+            }
+            eprintln!("{msg}");
             Err(ExitCode::from(1))
         }
         Err(MatchError::Ambiguous(candidates)) => {
-            eprintln!("pinyin-path: multiple matches for {:?}:", args.query);
-            for candidate in candidates {
-                eprintln!("  {}", candidate.path.display());
+            if args.json {
+                serde_json::to_writer_pretty(io::stdout().lock(), &candidates).map_err(|e| {
+                    let _ = writeln!(io::stderr(), "pinyin-path: {e}");
+                    ExitCode::from(1)
+                })?;
+                println!();
+            } else {
+                eprintln!(
+                    "pinyin-path: multiple matches for {:?}:",
+                    args.query
+                );
+                for candidate in &candidates {
+                    eprintln!("  {}", candidate.path.to_string_lossy());
+                }
             }
             Err(ExitCode::from(2))
         }

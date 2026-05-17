@@ -6,90 +6,69 @@
 #
 #   cd gong<Tab>       # -> cd 工作/
 #   vim baogao<Tab>    # -> vim 报告.txt
-#   cd com<Tab>        # still completes natively to compiler/
 #
-# To use a different key, change the bindkey line at the bottom.
+# Multiple matches participate in zsh's completion menu — repeated Tab
+# cycles through candidates just like native completion.
 
-# Commands where we only complete directories.
-typeset -ga _zh_dirs_cmds=(cd pcd z j pushd)
+# ---- shared completion helper ----------------------------------------
 
-# Commands where we only complete files.
-typeset -ga _zh_files_cmds=(cat vim nvim vi less head tail bat nano emacs)
+_zh_path_complete() {
+  # $1 = filter: "--dirs", "--files", or ""
+  local filter="$1"
+  local ret=1
+  local expl
 
-# Commands where we complete both.
-typeset -ga _zh_any_cmds=(ls code open rm cp mv)
+  # Native path completion via zsh's built-in _path_files.
+  case "$filter" in
+    --dirs)
+      _description directories expl 'directory'
+      _path_files -/ && ret=0
+      ;;
+    --files)
+      _description files expl 'file'
+      _path_files && ret=0
+      ;;
+    *)
+      _path_files && ret=0
+      ;;
+  esac
 
-_zh_needs_quoting() {
-  [[ "$1" != "${1##[a-zA-Z0-9._/-]}" ]]
+  # Pinyin extras: only when the word prefix looks like a pinyin query.
+  local word="${(Q)PREFIX}"
+  if [[ -n "$word" ]] && [[ "$word" =~ ^[a-z][a-z0-9]*$ ]]; then
+    local candidates
+    candidates=(${(f)"$(pinyin-path ${filter:+"$filter"} --list "$word" 2>/dev/null)"})
+    if (( ${#candidates} )); then
+      local -a matches
+      local c
+      for c in "${candidates[@]}"; do
+        matches+=("${c##*/}")
+      done
+      compadd -Q -X "  %B[zh]%b" -a matches && ret=0
+    fi
+  fi
+
+  return ret
 }
 
-_zh_complete_widget() {
-  # Only intervene when cursor is at end of buffer.
-  if (( CURSOR != ${#BUFFER} )); then
-    zle _zh_orig_tab
-    return
-  fi
+# ---- per-command wrappers --------------------------------------------
 
-  # Word under cursor = last space-delimited token before cursor.
-  local word="${LBUFFER##* }"
-  if [[ -z "$word" ]] || [[ ! "$word" =~ ^[a-z][a-z0-9]*$ ]]; then
-    zle _zh_orig_tab
-    return
-  fi
+_zh_cd()   { _zh_path_complete "--dirs" }
+_zh_cat()  { _zh_path_complete "--files" }
+_zh_vim()  { _zh_path_complete "--files" }
+_zh_ls()   { _zh_path_complete "" }
 
-  # Determine filter from the command name.
-  local cmd="${${(z)BUFFER}[1]}"
-  local filter=""
-  if (( _zh_dirs_cmds[(Ie)$cmd] )); then
-    filter="--dirs"
-  elif (( _zh_files_cmds[(Ie)$cmd] )); then
-    filter="--files"
-  elif (( _zh_any_cmds[(Ie)$cmd] )); then
-    filter=""
-  else
-    zle _zh_orig_tab
-    return
-  fi
+# ---- register with zsh completion system ------------------------------
 
-  local candidates
-  candidates=(${(f)"$(pinyin-path ${filter:+"$filter"} --list "$word" 2>/dev/null)"})
+# Guard against double-sourcing.
+(( ${+_zh_registered} )) && return 0
+typeset -gA _zh_registered
+_zh_registered=1
 
-  if (( ${#candidates} == 0 )); then
-    zle _zh_orig_tab
-    return
-  elif (( ${#candidates} == 1 )); then
-    local fullpath="${candidates[1]}"
-    local replacement="${fullpath##*/}"
-    if _zh_needs_quoting "$replacement"; then
-      replacement="${(q)replacement}"
-    fi
-    if [[ -d "$fullpath" ]]; then
-      replacement="${replacement}/"
-    fi
-    LBUFFER="${LBUFFER%"$word"}${replacement}"
-  else
-    local -a displayed=()
-    local c
-    for c in "${candidates[@]}"; do
-      if [[ -d "$c" ]]; then
-        displayed+=("${c##*/}/")
-      else
-        displayed+=("${c##*/}")
-      fi
-    done
-    zle -M "  ${(j:  :)displayed}"
-  fi
-}
+# compdef is loaded by compinit; ensure it is available.
+autoload -Uz compdef
 
-# ---- Install (guard against double-sourcing) ----
-if zle -l | grep -q '_zh_orig_tab' 2>/dev/null; then
-  return 0
-fi
-
-# Preserve whatever widget is currently bound to Tab (^I).
-local orig
-orig="${${$(bindkey '^I')##* }:-expand-or-complete}"
-zle -A "$orig" _zh_orig_tab
-
-zle -N _zh_complete_widget
-bindkey '^I' _zh_complete_widget
+compdef _zh_cd  cd pcd z j pushd
+compdef _zh_cat cat less head tail bat nano
+compdef _zh_vim vim nvim vi emacs
+compdef _zh_ls  ls code open rm cp mv

@@ -1,0 +1,18 @@
+[package]
+name = "zh-complete"
+version = "0.1.0"
+edition = "2021"
+description = "Pinyin-based shell path completion helpers for Chinese filenames"
+license = "MIT"
+repository = "https://github.com/juruo123/zh-complete"
+
+[[bin]]
+name = "pinyin-path"
+path = "src/main.rs"
+
+[dependencies]
+clap = { version = "4.5", features = ["derive"] }
+pinyin = "0.11"
+
+[dev-dependencies]
+tempfile = "3.10"

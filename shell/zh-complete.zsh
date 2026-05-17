@@ -2,180 +2,77 @@
 #
 #   source /path/to/zh-complete/shell/zh-complete.zsh
 #
-# Usage:
-#   cd gong<Tab>         # pinyin completion
-#   cd 工作/<Tab>         # native completion kicks in automatically
-#   cd 工作/bao<Tab>      # pinyin inside subdirectory
+# Then type pinyin queries and press Tab — works for all commands that
+# complete file paths (cd, ls, cat, vim, rm, ...):
 #
-# Only cd / pushd / z / j / pcd filter to directories.
-# All other commands match both files and directories.
+#   cd gong<Tab>          # -> cd 工作/
+#   vim 工作/bao<Tab>      # -> vim 工作/报告.txt
+#
+# How: wraps zsh's _files function, the central dispatcher for file
+# completion.  Native completion runs first (with full color, menu,
+# cycling).  When the prefix looks like a pinyin query, extra matches
+# are added via compadd to the same completion pool.
 
-# ---- helpers ---------------------------------------------------------
+# ---- guard -----------------------------------------------------------
 
-typeset -ga _zh_dirs_only=(cd pcd z j pushd)
-typeset -ga _zh_all=(ls cat vim nvim vi code open rm cp mv less head tail bat nano emacs)
+(( ${+_zh_installed} )) && return 0
+typeset -g _zh_installed=1
 
-# Cycle state.
-typeset -ga _zh_cycle_candidates
-typeset -g  _zh_cycle_index=0
-typeset -g  _zh_cycle_lbuffer=""
-typeset -g  _zh_cycle_orig_lbuf=""
+# ---- wrap _files -----------------------------------------------------
 
-# ---- formatting ------------------------------------------------------
+# Force-load the autoloadable _files function.
+autoload +X _files 2>/dev/null
 
-_zh_format_replacement() {
-  # $1 = full path → string to insert (quoted + / for dirs)
-  local fullpath="$1" name="${1##*/}"
-  name="${(q)name}"
-  [[ -d "$fullpath" ]] && name="${name}/"
-  printf '%s' "$name"
-}
+# If not available (e.g. broken fpath), bail without side effects.
+(( ${+functions[_files]} )) || return 0
 
-_zh_show_list() {
-  # $@ = full paths of candidates; $1 = current index (1-based)
-  # Uses prompt escape sequences (%F, %B, etc.) which ZLE renders
-  # natively, unlike raw ANSI codes that zle -M displays literally.
-  local idx="$1"; shift
-  local -a disp=()
-  local i=1 c name
-  for c in "$@"; do
-    name="${c##*/}"
-    if (( i == idx )); then
-      # Current selection: bold arrow + name
-      if [[ -d "$c" ]]; then
-        disp+=(" %B→%b %F{blue}${name}/%f")
-      else
-        disp+=(" %B→%b %F{white}${name}%f")
-      fi
-    else
-      if [[ -d "$c" ]]; then
-        disp+=("   %F{blue}${name}/%f")
-      else
-        disp+=("   ${name}")
-      fi
-    fi
-    (( i++ ))
-  done
-  POSTDISPLAY=$'\n'"${(j:  :)disp}"
-  zle -R
-}
+# Save the original.
+functions -c _files _zh_orig_files
 
-# ---- word extraction ------------------------------------------------
+# ---- pinyin helper ---------------------------------------------------
 
-_zh_extract_word() {
-  # Figures out the word to complete, its directory context, and the
-  # pinyin query.  Returns answers in global vars:
-  #   _zh_replace_from   — the substring in LBUFFER to replace
-  #   _zh_cwd            — directory to scan
-  #   _zh_query          — pinyin query (may be empty → no match)
+_zh_pinyin_add() {
+  local word="${(Q)PREFIX}"
+  [[ -n "$word" ]] && [[ "$word" =~ ^[a-z][a-z0-9]*$ ]] || return 1
 
-  _zh_replace_from=""
-  _zh_cwd="$PWD"
-  _zh_query=""
+  # Only cd / pushd / z / j / pcd filter to directories.
+  local cmd="${words[1]}" filter=""
+  case "$cmd" in
+    cd|pcd|z|j|pushd) filter="--dirs" ;;
+    *)                filter=""        ;;
+  esac
 
-  local word="${LBUFFER##* }"
-  [[ -z "$word" ]] && return
+  # Directory part already resolved (e.g. "工作/" in "工作/bao").
+  local iprefix="${(Q)IPREFIX}"
+  local cwd="${iprefix:-$PWD}"
+  [[ -n "$iprefix" ]] && [[ ! -d "$iprefix" ]] && cwd="$PWD"
 
-  if [[ "$word" == */* ]]; then
-    # Word has a path separator, e.g. "工作/bao".
-    local dir_part="${word%/*}"
-    local query_part="${word##*/}"
-
-    # If dir_part exists as a real directory, set it as cwd and only
-    # replace the query part (keep the directory prefix).
-    if [[ -d "$dir_part" ]]; then
-      _zh_cwd="$dir_part"
-      _zh_replace_from="$query_part"
-      _zh_query="$query_part"
-      return
-    fi
-    # If dir_part doesn't exist, fall through: treat the whole word
-    # as a query (won't match pinyin regex anyway).
-  fi
-
-  _zh_replace_from="$word"
-  _zh_query="$word"
-}
-
-# ---- widget ----------------------------------------------------------
-
-_zh_complete_widget() {
-  # === cycle mode: repeated Tab on previous multi-match result ===
-  if (( ${#_zh_cycle_candidates} )) && [[ "$LBUFFER" == "$_zh_cycle_lbuffer" ]]; then
-    _zh_cycle_index=$(( (_zh_cycle_index % ${#_zh_cycle_candidates}) + 1 ))
-    local fullpath="${_zh_cycle_candidates[$_zh_cycle_index]}"
-    LBUFFER="${_zh_cycle_orig_lbuf}"
-    local repl; repl=$(_zh_format_replacement "$fullpath")
-    LBUFFER="${LBUFFER}${repl}"
-    _zh_cycle_lbuffer="$LBUFFER"
-    _zh_show_list "$_zh_cycle_index" "${_zh_cycle_candidates[@]}"
-    return
-  fi
-
-  # Clear stale cycle state.
-  _zh_cycle_candidates=()
-  _zh_cycle_index=0
-  _zh_cycle_lbuffer=""
-  _zh_cycle_orig_lbuf=""
-  POSTDISPLAY=""
-
-  # === guards ===
-  (( CURSOR == ${#BUFFER} )) || { zle _zh_orig_tab; return }
-
-  _zh_extract_word
-  local query="$_zh_query"
-  if [[ -z "$query" ]] || [[ ! "$query" =~ ^[a-z][a-z0-9]*$ ]]; then
-    zle _zh_orig_tab
-    return
-  fi
-  local replace_from="$_zh_replace_from"
-  local cwd="$_zh_cwd"
-
-  # === determine filter ===
-  local cmd="${${(z)BUFFER}[1]}"
-  local filter=""
-  if (( _zh_dirs_only[(Ie)$cmd] )); then
-    filter="--dirs"
-  elif (( _zh_all[(Ie)$cmd] )); then
-    filter=""
-  else
-    zle _zh_orig_tab
-    return
-  fi
-
-  # === run pinyin-path ===
   local candidates
-  candidates=(${(f)"$(pinyin-path ${filter:+"$filter"} --cwd "$cwd" --list "$query" 2>/dev/null)"})
+  candidates=(${(f)"$(pinyin-path ${filter:+"$filter"} --cwd "$cwd" --list "$word" 2>/dev/null)"})
+  (( ${#candidates} )) || return 1
 
-  # === no match → native fallback ===
-  if (( ${#candidates} == 0 )); then
-    zle _zh_orig_tab
-    return
-  fi
-
-  # === single match ===
-  if (( ${#candidates} == 1 )); then
-    POSTDISPLAY=""
-    local repl; repl=$(_zh_format_replacement "${candidates[1]}")
-    LBUFFER="${LBUFFER%"$replace_from"}${repl}"
-    return
-  fi
-
-  # === multiple matches → insert first, arm cycling ===
-  _zh_cycle_candidates=("${candidates[@]}")
-  _zh_cycle_index=1
-  _zh_cycle_orig_lbuf="${LBUFFER%"$replace_from"}"
-  local repl; repl=$(_zh_format_replacement "${candidates[1]}")
-  LBUFFER="${_zh_cycle_orig_lbuf}${repl}"
-  _zh_cycle_lbuffer="$LBUFFER"
-  _zh_show_list 1 "${candidates[@]}"
+  local -a matches
+  local c
+  for c in "${candidates[@]}"; do
+    matches+=("${c##*/}")
+  done
+  compadd -Q -a matches
 }
 
-# ---- install ---------------------------------------------------------
+# ---- override _files -------------------------------------------------
 
-(( ${+_zh_orig_tab} )) && return 0
+_files() {
+  local orig_prefix="$PREFIX" orig_iprefix="$IPREFIX"
 
-local orig="${${$(bindkey '^I')##* }:-expand-or-complete}"
-zle -A "$orig" _zh_orig_tab
-zle -N _zh_complete_widget
-bindkey '^I' _zh_complete_widget
+  _zh_orig_files "$@"
+  local ret=$?
+
+  # Restore original prefix so pinyin matching sees the raw query,
+  # then add extras to the same completion pool (both native and
+  # pinyin matches participate in menu / colors / cycling).
+  PREFIX="$orig_prefix"
+  IPREFIX="$orig_iprefix"
+  _zh_pinyin_add && ret=0
+
+  return ret
+}

@@ -67,9 +67,10 @@ _zh_pinyin_completer() {
 
   [[ "$query" =~ ^[a-z][a-z0-9]*$ ]] || { _zh_debug "  E not pinyin"; return 1; }
 
+  # ${=} forces word-splitting so "zhc path" → "zhc" "path".
   local candidates
-  candidates=(${(f)"$(${__ZH_CMD__:-pinyin-path} ${filter:+"$filter"} --cwd "$cwd" --list "$query" 2>/dev/null)"})
-  _zh_debug "  F candidates=${#candidates}"
+  candidates=(${(f)"$(${=${__ZH_CMD__:-pinyin-path}} ${filter:+"$filter"} --cwd "$cwd" --list "$query" 2>/dev/null)"})
+  _zh_debug "  F candidates=${#candidates} err=[$(cat /tmp/_zh_err.log 2>/dev/null)]"
   (( ${#candidates} )) || { _zh_debug "  G no candidates"; return 1; }
 
   local -a matches displays

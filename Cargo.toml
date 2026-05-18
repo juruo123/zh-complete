@@ -10,6 +10,10 @@ repository = "https://github.com/juruo123/zh-complete"
 name = "pinyin-path"
 path = "src/main.rs"
 
+[[bin]]
+name = "zhc"
+path = "src/bin/zhc.rs"
+
 [dependencies]
 clap = { version = "4.5", features = ["derive"] }
 pinyin = "0.11"

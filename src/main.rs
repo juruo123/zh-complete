@@ -1,9 +1,7 @@
 use clap::Parser;
-use std::env;
-use std::io::{self, Write};
 use std::path::PathBuf;
 use std::process::ExitCode;
-use zh_complete::{find_matches, find_one, EntryKind, MatchError};
+use zh_complete::{run_path_query, PathQuery};
 
 #[derive(Debug, Parser)]
 #[command(name = "pinyin-path")]
@@ -34,84 +32,17 @@ struct Args {
 }
 
 fn main() -> ExitCode {
-    match run() {
+    let args = Args::parse();
+    match run_path_query(PathQuery {
+        dirs: args.dirs,
+        files: args.files,
+        list: args.list,
+        json: args.json,
+        cwd: args.cwd,
+        query: args.query,
+        program_name: "pinyin-path".into(),
+    }) {
         Ok(()) => ExitCode::SUCCESS,
         Err(code) => code,
     }
-}
-
-fn run() -> Result<(), ExitCode> {
-    let args = Args::parse();
-    let cwd = args
-        .cwd
-        .unwrap_or_else(|| env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
-    let kind = if args.dirs {
-        EntryKind::DirsOnly
-    } else if args.files {
-        EntryKind::FilesOnly
-    } else {
-        EntryKind::Any
-    };
-
-    if args.list {
-        let matches = find_matches(&cwd, &args.query, kind).map_err(print_io_error)?;
-        if args.json {
-            serde_json::to_writer_pretty(io::stdout().lock(), &matches).map_err(|e| {
-                let _ = writeln!(io::stderr(), "pinyin-path: {e}");
-                ExitCode::from(1)
-            })?;
-            println!();
-        } else {
-            for candidate in matches {
-                println!("{}", candidate.path.to_string_lossy());
-            }
-        }
-        return Ok(());
-    }
-
-    match find_one(&cwd, &args.query, kind).map_err(print_io_error)? {
-        Ok(candidate) => {
-            if args.json {
-                serde_json::to_writer_pretty(io::stdout().lock(), &candidate).map_err(|e| {
-                    let _ = writeln!(io::stderr(), "pinyin-path: {e}");
-                    ExitCode::from(1)
-                })?;
-                println!();
-            } else {
-                println!("{}", candidate.path.to_string_lossy());
-            }
-            Ok(())
-        }
-        Err(MatchError::NoMatch) => {
-            let msg = format!("pinyin-path: no match for {:?}", args.query);
-            if args.json {
-                println!("null");
-            }
-            eprintln!("{msg}");
-            Err(ExitCode::from(1))
-        }
-        Err(MatchError::Ambiguous(candidates)) => {
-            if args.json {
-                serde_json::to_writer_pretty(io::stdout().lock(), &candidates).map_err(|e| {
-                    let _ = writeln!(io::stderr(), "pinyin-path: {e}");
-                    ExitCode::from(1)
-                })?;
-                println!();
-            } else {
-                eprintln!(
-                    "pinyin-path: multiple matches for {:?}:",
-                    args.query
-                );
-                for candidate in &candidates {
-                    eprintln!("  {}", candidate.path.to_string_lossy());
-                }
-            }
-            Err(ExitCode::from(2))
-        }
-    }
-}
-
-fn print_io_error(err: io::Error) -> ExitCode {
-    let _ = writeln!(io::stderr(), "pinyin-path: {err}");
-    ExitCode::from(1)
 }

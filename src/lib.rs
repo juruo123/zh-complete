@@ -1,9 +1,13 @@
 use pinyin::ToPinyin;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
+use std::collections::hash_map::DefaultHasher;
 use std::ffi::OsString;
 use std::fs;
-use std::io;
+use std::hash::{Hash, Hasher};
+use std::io::{self, Write};
 use std::path::{Path, PathBuf};
+use std::process::ExitCode;
+use std::time::SystemTime;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EntryKind {
@@ -45,6 +49,89 @@ pub enum MatchError {
     Ambiguous(Vec<Candidate>),
 }
 
+// ---- directory scan cache --------------------------------------------
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct CacheData {
+    mtime_secs: u64,
+    entries: Vec<CachedEntry>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct CachedEntry {
+    file_name: String,
+    is_dir: bool,
+    full_pinyin: String,
+    initials: String,
+    ascii_folded: String,
+}
+
+fn cache_path(cwd: &Path, kind: EntryKind) -> PathBuf {
+    let mut h = DefaultHasher::new();
+    cwd.hash(&mut h);
+    (kind as u8).hash(&mut h);
+    std::env::temp_dir().join(format!("zhc_{:016x}.json", h.finish()))
+}
+
+fn cache_load(cwd: &Path, kind: EntryKind) -> Option<Vec<Candidate>> {
+    let path = cache_path(cwd, kind);
+    let data = fs::read_to_string(&path).ok()?;
+    let cached: CacheData = serde_json::from_str(&data).ok()?;
+
+    // Invalidate if directory modification time changed.
+    let current = fs::metadata(cwd)
+        .ok()?
+        .modified()
+        .ok()?
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .ok()?
+        .as_secs();
+    if current != cached.mtime_secs {
+        let _ = fs::remove_file(&path);
+        return None;
+    }
+
+    Some(
+        cached
+            .entries
+            .into_iter()
+            .map(|e| Candidate {
+                file_name: OsString::from(&e.file_name),
+                path: cwd.join(&e.file_name),
+                is_dir: e.is_dir,
+                full_pinyin: e.full_pinyin,
+                initials: e.initials,
+                ascii_folded: e.ascii_folded,
+            })
+            .collect(),
+    )
+}
+
+fn cache_save(cwd: &Path, kind: EntryKind, candidates: &[Candidate]) {
+    let current = match fs::metadata(cwd).and_then(|m| m.modified()) {
+        Ok(t) => t.duration_since(SystemTime::UNIX_EPOCH).unwrap_or_default().as_secs(),
+        Err(_) => return,
+    };
+
+    let data = CacheData {
+        mtime_secs: current,
+        entries: candidates
+            .iter()
+            .map(|c| CachedEntry {
+                file_name: c.file_name.to_string_lossy().into_owned(),
+                is_dir: c.is_dir,
+                full_pinyin: c.full_pinyin.clone(),
+                initials: c.initials.clone(),
+                ascii_folded: c.ascii_folded.clone(),
+            })
+            .collect(),
+    };
+
+    if let Ok(json) = serde_json::to_string(&data) {
+        let _ = fs::write(cache_path(cwd, kind), json);
+    }
+}
+
 pub fn find_one(
     cwd: &Path,
     query: &str,
@@ -77,31 +164,40 @@ fn find_matches_normalized(
     query: &str,
     kind: EntryKind,
 ) -> io::Result<Vec<Candidate>> {
-    let mut matches = Vec::new();
+    // Try cache first — avoids rescanning the directory on every Tab press.
+    let all_candidates: Vec<Candidate> = if let Some(cached) = cache_load(cwd, kind) {
+        cached
+    } else {
+        let mut all = Vec::new();
+        for entry in fs::read_dir(cwd)? {
+            let entry = entry?;
+            let file_type = entry.file_type()?;
+            let is_dir = file_type.is_dir();
 
-    for entry in fs::read_dir(cwd)? {
-        let entry = entry?;
-        let file_type = entry.file_type()?;
-        let is_dir = file_type.is_dir();
+            if !matches_kind(is_dir, kind) {
+                continue;
+            }
 
-        if !matches_kind(is_dir, kind) {
-            continue;
+            let file_name = entry.file_name();
+            let display_name = file_name.to_string_lossy();
+            let candidate = build_candidate(file_name.clone(), entry.path(), is_dir, &display_name);
+
+            // Skip pure-ASCII entries — shell handles them natively.
+            if candidate.full_pinyin == candidate.ascii_folded {
+                continue;
+            }
+
+            all.push(candidate);
         }
+        cache_save(cwd, kind, &all);
+        all
+    };
 
-        let file_name = entry.file_name();
-        let display_name = file_name.to_string_lossy();
-        let candidate = build_candidate(file_name.clone(), entry.path(), is_dir, &display_name);
-
-        // Skip entries with no Chinese characters — the shell's built-in
-        // completion already handles pure-ASCII names perfectly well.
-        if candidate.full_pinyin == candidate.ascii_folded {
-            continue;
-        }
-
-        if let Some(score) = candidate.match_score(&query) {
-            matches.push((score, candidate));
-        }
-    }
+    // Filter and score against the query.
+    let mut matches: Vec<(usize, Candidate)> = all_candidates
+        .into_iter()
+        .filter_map(|c| c.match_score(query).map(|s| (s, c)))
+        .collect();
 
     matches.sort_by(|(a_score, a), (b_score, b)| {
         b_score
@@ -208,6 +304,113 @@ fn matches_kind(is_dir: bool, kind: EntryKind) -> bool {
     }
 }
 
+// ---- CLI helper ------------------------------------------------------
+
+pub struct PathQuery {
+    pub dirs: bool,
+    pub files: bool,
+    pub list: bool,
+    pub json: bool,
+    pub cwd: Option<PathBuf>,
+    pub query: String,
+    pub program_name: String,
+}
+
+pub fn run_path_query(q: PathQuery) -> Result<(), ExitCode> {
+    let cwd = q
+        .cwd
+        .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
+    let kind = if q.dirs {
+        EntryKind::DirsOnly
+    } else if q.files {
+        EntryKind::FilesOnly
+    } else {
+        EntryKind::Any
+    };
+
+    if q.list {
+        let matches = find_matches(&cwd, &q.query, kind).map_err(|e| print_io_error(&q.program_name, e))?;
+        if q.json {
+            serde_json::to_writer_pretty(io::stdout().lock(), &matches).map_err(|e| {
+                let _ = writeln!(io::stderr(), "{}: {e}", q.program_name);
+                ExitCode::from(1)
+            })?;
+            println!();
+        } else {
+            for candidate in matches {
+                println!("{}", candidate.path.to_string_lossy());
+            }
+        }
+        return Ok(());
+    }
+
+    match find_one(&cwd, &q.query, kind).map_err(|e| print_io_error(&q.program_name, e))? {
+        Ok(candidate) => {
+            if q.json {
+                serde_json::to_writer_pretty(io::stdout().lock(), &candidate).map_err(|e| {
+                    let _ = writeln!(io::stderr(), "{}: {e}", q.program_name);
+                    ExitCode::from(1)
+                })?;
+                println!();
+            } else {
+                println!("{}", candidate.path.to_string_lossy());
+            }
+            Ok(())
+        }
+        Err(MatchError::NoMatch) => {
+            let msg = format!("{}: no match for {:?}", q.program_name, q.query);
+            if q.json {
+                println!("null");
+            }
+            eprintln!("{msg}");
+            Err(ExitCode::from(1))
+        }
+        Err(MatchError::Ambiguous(candidates)) => {
+            if q.json {
+                serde_json::to_writer_pretty(io::stdout().lock(), &candidates).map_err(|e| {
+                    let _ = writeln!(io::stderr(), "{}: {e}", q.program_name);
+                    ExitCode::from(1)
+                })?;
+                println!();
+            } else {
+                eprintln!(
+                    "{}: multiple matches for {:?}:",
+                    q.program_name, q.query
+                );
+                for candidate in &candidates {
+                    eprintln!("  {}", candidate.path.to_string_lossy());
+                }
+            }
+            Err(ExitCode::from(2))
+        }
+    }
+}
+
+fn print_io_error(program_name: &str, err: io::Error) -> ExitCode {
+    let _ = writeln!(io::stderr(), "{program_name}: {err}");
+    ExitCode::from(1)
+}
+
+// ---- zsh init template -----------------------------------------------
+
+/// Returns the zsh completer source.
+/// `cmd` is the shell command for path matching, e.g. "zhc path" or "pinyin-path".
+pub fn zsh_init_script(cmd: &str, show_header: bool, debug: bool) -> String {
+    let header_line = if show_header {
+        ""
+    } else {
+        "zstyle ':zh-complete:*' show-header false\n"
+    };
+    let debug_line = if debug { "export ZH_COMPLETE_DEBUG=1\n" } else { "" };
+
+    format!(
+        "{}export __ZH_CMD__='{}'\n{}{}",
+        debug_line,
+        cmd,
+        header_line,
+        include_str!("../shell/zh-complete.zsh")
+    )
+}
 
 #[cfg(test)]
 mod tests {

@@ -64,7 +64,7 @@ _zh_pinyin_completer() {
   [[ "$query" =~ ^[a-z][a-z0-9]*$ ]] || { _zh_debug "  E not pinyin"; return 1; }
 
   local candidates
-  candidates=(${(f)"$(pinyin-path ${filter:+"$filter"} --cwd "$cwd" --list "$query" 2>/dev/null)"})
+  candidates=(${(f)"$(${__ZH_CMD__:-pinyin-path} ${filter:+"$filter"} --cwd "$cwd" --list "$query" 2>/dev/null)"})
   _zh_debug "  F candidates=${#candidates}"
   (( ${#candidates} )) || { _zh_debug "  G no candidates"; return 1; }
 
@@ -84,13 +84,8 @@ _zh_pinyin_completer() {
 
   # -U: accept matches even if they don't start with PREFIX.
   # -f: treat as files → zsh auto-detects type, adds / for dirs.
-  # No -Q: let compadd auto-quote filenames with spaces/special chars.
   local -a compadd_args=(-U -f)
   _zh_show_header && compadd_args+=(-X "%B[zh]%b")
-
-  # -f: treat matches as files; zsh determines the type and adds "/"
-  # for directories, enabling the "/" key to navigate into subdirs.
-  compadd_args+=(-f)
 
   compadd "${compadd_args[@]}" -d displays -a matches 2>> /tmp/_zh_diag.log
   _zh_debug "  I compadd exit=$?"

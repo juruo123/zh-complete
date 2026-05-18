@@ -6,17 +6,11 @@ complete `工作/` — no need to switch to a Chinese input method.
 ## Quick start
 
 ```sh
-# Build and install the helper binary
+# Build and install
 cargo install --path .
 
 # Add to ~/.zshrc
-source /path/to/zh-complete/shell/zh-complete.zsh
-```
-
-Or use the installer:
-
-```sh
-./install.sh
+eval "$(zhc init zsh)"
 ```
 
 ## How it works
@@ -65,25 +59,38 @@ Scoring (higher is better):
 - Pure ASCII names (e.g. `compiler`) are excluded — the shell handles them
   natively.
 
-## pinyin-path CLI
+## zhc CLI
+
+The `zhc` binary is the main entry point. `pinyin-path` is kept for
+backward compatibility.
 
 ```sh
-# Single match — prints the real path
-pinyin-path --dirs gongzuo
+# Pinyin path matching
+zhc path --dirs gongzuo
 # → /home/me/工作
 
 # List all candidates
-pinyin-path --dirs --list gong
+zhc path --dirs --list gong
 # → /home/me/工作
 # → /home/me/工作报告
 
 # JSON output
-pinyin-path --dirs --list --json gong
+zhc path --dirs --list --json gong
 # → [{"file_name":"工作","path":"...","is_dir":true,...}]
 
+# Generate zsh integration (add to ~/.zshrc)
+eval "$(zhc init zsh)"
+
+# With options
+eval "$(zhc init zsh --no-header --debug)"
+
 # Scan a specific directory
-pinyin-path --cwd /some/where gongzuo
+zhc path --cwd /some/where gongzuo
 ```
+
+Directory scan results are cached to `$TMPDIR` (invalidated when the
+directory's mtime changes). The first Tab press scans the directory;
+subsequent presses for the same directory reuse the cache.
 
 Exit codes: `0` single match, `1` no match, `2` ambiguous.
 
@@ -134,7 +141,9 @@ README.md
 - [x] Integration tests
 - [x] Multi-level directory completion (`cd 工作/ce<Tab>`)
 - [x] Configurable header and debug logging
-- [ ] Unified `zhc` binary (init, config, path subcommands)
+- [x] Unified `zhc` binary (`zhc path`, `zhc init zsh`)
+- [x] Directory scan caching (mtime-based, per-directory)
+- [x] Install script (`install.sh`)
 - [ ] `fzf` integration for interactive selection
 - [ ] bash / fish support
 - [ ] Cache support for large directories

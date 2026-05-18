@@ -30,7 +30,7 @@ _complete          ← native file/directory completion runs first
     │ (no native match → return 1)
     ▼
 _zh_pinyin_completer ← pinyin matching kicks in
-    │                   ┌─ pinyin-path (Rust): scan dir, pinyin convert, match
+    │                   ┌─ zhc path (Rust): scan dir, pinyin convert, match
     │                   └─ compadd: add Chinese results to completion pool
     ▼
 _ignored
@@ -105,14 +105,24 @@ that completes file paths inherits pinyin support automatically.
 
 ## Configuration
 
-Set **before** sourcing `shell/zh-complete.zsh`:
+Configuration is passed to `zhc init`:
+
+```sh
+# Default (header shown, no debug)
+eval "$(zhc init zsh)"
+
+# Hide the [zh] header
+eval "$(zhc init zsh --no-header)"
+
+# Enable diagnostic logging
+eval "$(zhc init zsh --debug)"
+```
+
+If sourcing `shell/zh-complete.zsh` directly instead, set these before sourcing:
 
 ```zsh
-# Hide the [zh] header in the completion menu
-zstyle ':zh-complete:*' show-header false
-
-# Enable diagnostic logging to /tmp/_zh_diag.log
-export ZH_COMPLETE_DEBUG=1
+zstyle ':zh-complete:*' show-header false   # hide [zh] header
+export ZH_COMPLETE_DEBUG=1                  # enable debug logging
 ```
 
 ## Project layout
@@ -120,13 +130,14 @@ export ZH_COMPLETE_DEBUG=1
 ```text
 Cargo.toml
 src/
-  lib.rs              # Scanning, pinyin conversion, scoring, matching
-  main.rs             # CLI (pinyin-path)
+  lib.rs              # Scanning, pinyin conversion, scoring, matching, caching
+  main.rs             # pinyin-path binary (backward compat)
+  bin/zhc.rs          # zhc binary (zhc path, zhc init zsh)
 tests/
   cli.rs              # 18 integration tests
 shell/
   pcd.zsh             # pcd zsh wrapper
-  zh-complete.zsh     # zsh completer (hooks into completion system)
+  zh-complete.zsh     # zsh completer (also embedded in zhc init zsh)
 install.sh            # One-command installer
 README.md
 ```
@@ -146,7 +157,6 @@ README.md
 - [x] Install script (`install.sh`)
 - [ ] `fzf` integration for interactive selection
 - [ ] bash / fish support
-- [ ] Cache support for large directories
 - [ ] Polyphonic character dictionary (e.g. 重庆 → chongqing)
 - [ ] Homebrew formula
 - [ ] GitHub Actions release builds
